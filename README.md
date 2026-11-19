@@ -42,7 +42,7 @@ Add the project URL and publishable key from the Supabase Connect dialog to `.en
    - `supabase/migrations/011_fix_admin_profile_login.sql`
    - `supabase/migrations/012_repair_existing_admin_roles.sql`
    - Continue with each later migration in numerical order through
-     `supabase/migrations/020_term_scoped_payment_dashboard.sql`.
+     `supabase/migrations/022_reuse_pupil_admission_numbers.sql`.
 3. On the application login page, select **Create an account**. Signup accepts only:
    - `regaltulipschool@gmail.com` — main administrator
    - `ogechukwuifunanya@gmail.com` — payment administrator

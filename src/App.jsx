@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bell, Bus, ChevronDown, ChevronRight, ClipboardList,
   Download, GraduationCap, LayoutDashboard, Menu, Plus, ReceiptText,
@@ -16,7 +16,7 @@ import StatusBadge from './components/StatusBadge'
 import { getPaymentStatus } from './utils/payments'
 import { demoPayments, demoPupils } from './data/demoData'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import { createPayment, createPupil, loadSchoolData, updatePupil } from './lib/schoolApi'
+import { createPayment, createPupil, deletePupils, loadSchoolData, updatePupil } from './lib/schoolApi'
 
 const currency = (value) => `₦${Number(value || 0).toLocaleString()}`
 const readableError = (error, fallback) => {
@@ -74,6 +74,8 @@ function EmptyState({ icon: Icon, title, text }) {
 function App() {
   const [activePage, setActivePage] = useState(getSavedPage)
   const [pupils, setPupils] = useState(isSupabaseConfigured ? [] : demoPupils)
+  const demoAdmissionSequence = useRef(Math.max(...demoPupils.map((pupil) => Number(pupil.admissionNo.split('/').pop()))))
+  const releasedDemoAdmissionNumbers = useRef([])
   const [payments, setPayments] = useState(isSupabaseConfigured ? [] : demoPayments)
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('All classes')
@@ -289,7 +291,13 @@ function App() {
         await createPupil(pupil, adminRole)
         await refreshSchoolData()
       } else {
-        setPupils((current) => [pupil, ...current])
+        let admissionNo = releasedDemoAdmissionNumbers.current.shift()
+        if (!admissionNo) {
+          const year = new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Lagos' }).format(new Date())
+          const number = String(++demoAdmissionSequence.current).padStart(3, '0')
+          admissionNo = 'RTS/' + year + '/' + number
+        }
+        setPupils((current) => [{ ...pupil, admissionNo }, ...current])
       }
       notify(`${pupil.firstName} ${pupil.lastName} was registered successfully`)
       return true
@@ -317,6 +325,27 @@ function App() {
       notify(`Payment of ${currency(payment.amount)} recorded`)
     } catch (error) {
       notify(error.message || 'Payment could not be recorded.')
+    }
+  }
+
+  async function removePupils(records) {
+    const names = new Map(records.map((pupil) => [pupil.id, `${pupil.firstName} ${pupil.lastName}`]))
+    try {
+      if (isSupabaseConfigured) {
+        await deletePupils([...names.keys()])
+      } else {
+        releasedDemoAdmissionNumbers.current.push(...records.map((pupil) => pupil.admissionNo))
+        releasedDemoAdmissionNumbers.current.sort()
+      }
+      setPupils((current) => current.filter((pupil) => !names.has(pupil.id)))
+      setPayments((current) => current.map((payment) => names.has(payment.pupilId)
+        ? { ...payment, pupilName: names.get(payment.pupilId) }
+        : payment))
+      notify(records.length === 1 ? 'Pupil deleted from the register' : `${records.length} pupils deleted from the register`)
+      return true
+    } catch (error) {
+      notify(readableError(error, 'The selected pupils could not be deleted.'))
+      return false
     }
   }
 
@@ -393,9 +422,20 @@ function App() {
           {activePage === 'dashboard' && (adminRole === 'main_admin'
             ? <Dashboard adminUsername={adminUsername} stats={stats} pupils={pupils} payments={payments} setSelectedPupil={setSelectedPupil} openRegistration={() => setModal('pupil')} openPayment={() => setModal('payment')} navigate={navigate} />
             : <PaymentAdminDashboard pupils={pupils} openPayment={(pupil) => { setSelectedPupil(pupil || null); setModal('payment') }} />)}
-          {activePage === 'pupils' && (adminRole === 'main_admin'
-            ? <PupilsPage pupils={filteredPupils} search={search} setSearch={setSearch} classFilter={classFilter} setClassFilter={setClassFilter} statusFilter={statusFilter} setStatusFilter={setStatusFilter} setSelectedPupil={setSelectedPupil} openRegistration={() => setModal('pupil')} />
-            : <PaymentEntryPage pupils={filteredPupils} search={search} setSearch={setSearch} openRegistration={() => setModal('pupil')} onView={setSelectedPupil} openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }} />)}
+          {activePage === 'pupils' && <PupilsPage
+            fullFinancialAccess={adminRole === 'main_admin'}
+            pupils={filteredPupils}
+            search={search}
+            setSearch={setSearch}
+            classFilter={classFilter}
+            setClassFilter={setClassFilter}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            setSelectedPupil={setSelectedPupil}
+            openRegistration={() => setModal('pupil')}
+            openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }}
+            onDelete={removePupils}
+          />}
           {adminRole === 'main_admin' && activePage === 'fees' && <FeesPage pupils={filteredPupils} search={search} setSearch={setSearch} setSelectedPupil={setSelectedPupil} openPayment={(pupil) => { setSelectedPupil(pupil || null); setModal('payment') }} onPrint={() => window.print()} />}
           {adminRole === 'main_admin' && activePage === 'bus' && <BusPage pupils={pupils.filter((pupil) => pupil.usesBus)} openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }} />}
           {adminRole === 'main_admin' && activePage === 'reports' && <ReportsPage pupils={pupils} payments={payments} onExport={exportReport} />}
@@ -463,7 +503,7 @@ function Dashboard({ adminUsername, stats, pupils, payments, setSelectedPupil, o
         <div className="panel-header"><div><h2>Recent payments</h2><p>Latest transactions recorded</p></div><button className="text-button" onClick={() => navigate('fees')}>View all <ChevronRight size={15} /></button></div>
         <div className="transaction-list">{recent.map((payment) => {
           const pupil = pupils.find((p) => p.id === payment.pupilId)
-          return <button className="transaction" key={payment.id} onClick={() => pupil && setSelectedPupil(pupil)}><Avatar pupil={pupil} /><div><strong>{pupil?.firstName} {pupil?.lastName}</strong><span>{payment.category} · {payment.method}</span></div><div className="transaction-value"><strong>{currency(payment.amount)}</strong><span>{payment.date === '2026-08-02' ? 'Today' : payment.date}</span></div></button>
+          return <button className="transaction" key={payment.id} disabled={!pupil} onClick={() => setSelectedPupil(pupil)}>{pupil ? <Avatar pupil={pupil} /> : <span className="avatar avatar-fallback"><Users size={18} /></span>}<div><strong>{pupil ? `${pupil.firstName} ${pupil.lastName}` : payment.pupilName || 'Former pupil'}</strong><span>{payment.category} · {payment.method}</span></div><div className="transaction-value"><strong>{currency(payment.amount)}</strong><span>{payment.date === '2026-08-02' ? 'Today' : payment.date}</span></div></button>
         })}</div>
       </div>
       <div className="panel collection-panel">
@@ -499,11 +539,68 @@ function StatCard({ title, value, note, icon: Icon, tone, breakdown }) {
   return <article className={`stat-card ${breakdown ? 'stat-card-breakdown' : ''}`}><div className={`stat-icon ${tone}`}><Icon size={21} /></div><div className="stat-body"><span>{title}</span><strong>{value}</strong>{note && <small>{note}</small>}{breakdown && <div className="stat-breakdown">{breakdown.map((item) => <span className={item.tone} key={item.label}><b>{item.value}</b>{item.label}</span>)}</div>}</div><span className="stat-spark">↗</span></article>
 }
 
-function PupilsPage({ pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration }) {
+function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration, openPayment, onDelete }) {
+  const [selectedIds, setSelectedIds] = useState([])
+  const [pendingDelete, setPendingDelete] = useState([])
+  const [deleting, setDeleting] = useState(false)
+  const selected = pupils.filter((pupil) => selectedIds.includes(pupil.id))
+
+  function togglePupil(id) {
+    setSelectedIds((ids) => ids.includes(id) ? ids.filter((selectedId) => selectedId !== id) : [...ids, id])
+  }
+
+  function closeDelete() {
+    if (!deleting) setPendingDelete([])
+  }
+
+  async function confirmDelete(event) {
+    event.preventDefault()
+    if (deleting) return
+    setDeleting(true)
+    if (await onDelete(pendingDelete)) {
+      setSelectedIds([])
+      setPendingDelete([])
+    }
+    setDeleting(false)
+  }
+
   return <>
-    <PageHeading eyebrow="Pupil records" title="All pupils" text={`${pupils.length} pupil records found in the current session.`} action={<button className="button button-primary" onClick={openRegistration}><Plus size={18} /> Register pupil</button>} />
-    <div className="filter-bar"><div className="table-search"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search records..." /></div><select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}><option>All classes</option>{['Nursery 1','Nursery 2','Primary 1','Primary 2','Primary 3','Primary 4','Primary 5','Primary 6'].map((x) => <option key={x}>{x}</option>)}</select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>All statuses</option><option>Paid</option><option>Part Payment</option><option>Not Paid</option></select></div>
-    <section className="panel table-panel">{pupils.length ? <PupilTable pupils={pupils} onSelect={setSelectedPupil} /> : <EmptyState icon={Search} title="No pupil found" text="Try changing your search or filters." />}</section>
+    <PageHeading
+      eyebrow={fullFinancialAccess ? "Pupil records" : "Pupil administration"}
+      title={fullFinancialAccess ? "All pupils" : "Pupils"}
+      text={fullFinancialAccess
+        ? pupils.length + " pupil records found in the current session."
+        : "Register pupils, view their profiles and record amounts received by the school."}
+      action={<div className="heading-actions">
+        {selected.length > 0 && <button className="button button-danger" onClick={() => setPendingDelete(selected)}>Delete selected ({selected.length})</button>}
+        <button className="button button-primary" onClick={openRegistration}><UserPlus size={18} /> Register pupil</button>
+      </div>}
+    />
+    {fullFinancialAccess
+      ? <div className="filter-bar"><div className="table-search"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search records..." /></div><select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}><option>All classes</option>{['Nursery 1','Nursery 2','Primary 1','Primary 2','Primary 3','Primary 4','Primary 5','Primary 6'].map((x) => <option key={x}>{x}</option>)}</select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>All statuses</option><option>Paid</option><option>Part Payment</option><option>Not Paid</option></select></div>
+      : <div className="filter-bar"><div className="table-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, admission number or guardian phone..." /></div></div>}
+    <section className="panel table-panel">
+      {pupils.length === 0
+        ? <EmptyState icon={Search} title="No pupil found" text="Try changing your search or filters." />
+        : fullFinancialAccess
+          ? <PupilTable pupils={pupils} onSelect={setSelectedPupil} selectedIds={selectedIds} onTogglePupil={togglePupil} />
+          : <PaymentEntryTable pupils={pupils} onView={setSelectedPupil} openPayment={openPayment} selectedIds={selectedIds} onTogglePupil={togglePupil} />}
+    </section>
+    {pendingDelete.length > 0 && <Modal
+      title={pendingDelete.length === 1 ? "Delete pupil?" : "Delete " + pendingDelete.length + " pupils?"}
+      subtitle="The selected pupils will be removed from the active register. Their registration numbers can be reused and their payment history will be kept."
+      onClose={closeDelete}
+    >
+      <form onSubmit={confirmDelete}>
+        <div className="form-scroll"><ul>{pendingDelete.map((pupil) => <li key={pupil.id}>
+          {pupil.firstName} {pupil.lastName} ({pupil.admissionNo})
+        </li>)}</ul></div>
+        <footer className="modal-actions">
+          <button type="button" className="button button-ghost" onClick={closeDelete} disabled={deleting}>Cancel</button>
+          <button className="button button-danger" disabled={deleting}>{deleting ? "Deleting..." : "Confirm deletion"}</button>
+        </footer>
+      </form>
+    </Modal>}
   </>
 }
 
@@ -524,12 +621,8 @@ function PaymentAdminDashboard({ pupils, openPayment }) {
   </>
 }
 
-function PaymentEntryPage({ pupils, search, setSearch, openRegistration, onView, openPayment }) {
-  return <>
-    <PageHeading eyebrow="Pupil administration" title="Pupils" text="Register pupils, view their profiles and record amounts received by the school." action={<button className="button button-primary" onClick={openRegistration}><UserPlus size={18} /> Register pupil</button>} />
-    <div className="filter-bar"><div className="table-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, admission number or guardian phone..." /></div></div>
-    <section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Pupil</th><th>Admission no.</th><th>Class</th><th>Part-payment figures</th><th></th></tr></thead><tbody>{pupils.map((pupil) => <tr key={pupil.id}><td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.financialVisible ? <div className="partial-inline"><span>Paid: {currency(pupil.feePaid + pupil.busPaid)}</span><strong>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div> : <span className="restricted-value">Financial figures restricted</span>}</td><td><div className="row-actions"><button className="text-button" onClick={() => onView(pupil)}>View profile</button><button className="button button-secondary" onClick={() => openPayment(pupil)}>Record payment</button></div></td></tr>)}</tbody></table></div></section>
-  </>
+function PaymentEntryTable({ pupils, onView, openPayment, selectedIds, onTogglePupil }) {
+  return <div className="table-wrap"><table><thead><tr><th scope="col">Select</th><th>Pupil</th><th>Admission no.</th><th>Class</th><th>Part-payment figures</th><th></th></tr></thead><tbody>{pupils.map((pupil) => <tr key={pupil.id}><PupilSelectionCell pupil={pupil} selected={selectedIds.includes(pupil.id)} onTogglePupil={onTogglePupil} /><td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.financialVisible ? <div className="partial-inline"><span>Paid: {currency(pupil.feePaid + pupil.busPaid)}</span><strong>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div> : <span className="restricted-value">Financial figures restricted</span>}</td><td><div className="row-actions"><button className="text-button" onClick={() => onView(pupil)}>View profile</button><button className="button button-secondary" onClick={() => openPayment(pupil)}>Record payment</button></div></td></tr>)}</tbody></table></div>
 }
 
 function PartPaymentTable({ pupils, onPayment }) {
@@ -557,8 +650,21 @@ function AttentionPupilTable({ pupils, onSelect }) {
   </table></div>
 }
 
-function PupilTable({ pupils, onSelect }) {
-  return <div className="table-wrap"><table><thead><tr><th>Pupil</th><th>Admission no.</th><th>Class</th><th>School Bus</th><th>School fees</th><th>Amount paid</th><th>Outstanding balance</th><th></th></tr></thead><tbody>{pupils.map((pupil) => { const balance = Math.max(0, pupil.feeExpected - pupil.feePaid); const status = getPaymentStatus(pupil.feePaid, pupil.feeExpected); return <tr key={pupil.id} onClick={() => onSelect(pupil)}><td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.usesBus ? <><span className="fee-section-label">{pupil.feeSection || 'Bus area not set'}</span>{pupil.feeSection === 'Far Away' && <small className="table-sub">{pupil.farAwayLocation}</small>}</> : <span className="restricted-value">Not using bus</span>}</td><td><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /></td><td><strong>{currency(pupil.feePaid)}</strong><small className="table-sub">of {currency(pupil.feeExpected)}</small></td><td><strong className={status === 'Part Payment' ? 'balance-partial' : status === 'Not Paid' ? 'balance-unpaid' : 'balance-clear'}>{currency(balance)}</strong>{status === 'Part Payment' && <small className="table-sub">still to be paid</small>}</td><td><button className="row-button"><ChevronRight size={17} /></button></td></tr> })}</tbody></table></div>
+function PupilSelectionCell({ pupil, selected, onTogglePupil }) {
+  return <td onClick={(event) => event.stopPropagation()}>
+    <input
+      type="checkbox"
+      checked={selected}
+      aria-label={"Select " + pupil.firstName + " " + pupil.lastName + " (" + pupil.admissionNo + ")"}
+      onChange={() => onTogglePupil(pupil.id)}
+    />
+  </td>
+}
+
+function PupilTable({ pupils, onSelect, selectedIds, onTogglePupil }) {
+  return <div className="table-wrap"><table><thead><tr>{onTogglePupil && <th scope="col">Select</th>}<th>Pupil</th><th>Admission no.</th><th>Class</th><th>School Bus</th><th>School fees</th><th>Amount paid</th><th>Outstanding balance</th><th></th></tr></thead><tbody>{pupils.map((pupil) => { const balance = Math.max(0, pupil.feeExpected - pupil.feePaid); const status = getPaymentStatus(pupil.feePaid, pupil.feeExpected); return <tr key={pupil.id} onClick={() => onSelect(pupil)}>
+    {onTogglePupil && <PupilSelectionCell pupil={pupil} selected={selectedIds.includes(pupil.id)} onTogglePupil={onTogglePupil} />}
+    <td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.usesBus ? <><span className="fee-section-label">{pupil.feeSection || 'Bus area not set'}</span>{pupil.feeSection === 'Far Away' && <small className="table-sub">{pupil.farAwayLocation}</small>}</> : <span className="restricted-value">Not using bus</span>}</td><td><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /></td><td><strong>{currency(pupil.feePaid)}</strong><small className="table-sub">of {currency(pupil.feeExpected)}</small></td><td><strong className={status === 'Part Payment' ? 'balance-partial' : status === 'Not Paid' ? 'balance-unpaid' : 'balance-clear'}>{currency(balance)}</strong>{status === 'Part Payment' && <small className="table-sub">still to be paid</small>}</td><td><button className="row-button"><ChevronRight size={17} /></button></td></tr> })}</tbody></table></div>
 }
 
 function FeesPage({ pupils, search, setSearch, setSelectedPupil, openPayment, onPrint }) {

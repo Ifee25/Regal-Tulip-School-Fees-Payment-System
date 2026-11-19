@@ -55,7 +55,7 @@ export async function loadSchoolData(adminRole = 'main_admin') {
       { data: rows, error: paymentError },
     ] = await Promise.all([
       client.from('invoice_balances').select('*').eq('term_id', term.id),
-      client.from('payments').select('id, pupil_id, amount, payment_method, paid_at, reference, payment_allocations(invoice:fee_invoices(category:fee_categories(name)))').eq('term_id', term.id).is('reversed_at', null).order('paid_at', { ascending: false }).limit(100),
+      client.from('payments').select('id, pupil_id, amount, payment_method, paid_at, reference, pupil:pupils(first_name, last_name), payment_allocations(invoice:fee_invoices(category:fee_categories(name)))').eq('term_id', term.id).is('reversed_at', null).order('paid_at', { ascending: false }).limit(100),
     ])
     if (balanceError) throw balanceError
     if (paymentError) throw paymentError
@@ -115,6 +115,7 @@ export async function loadSchoolData(adminRole = 'main_admin') {
 
   const payments = (paymentRows || []).map((row) => ({
     id: row.id, pupilId: row.pupil_id, amount: Number(row.amount),
+    pupilName: row.pupil ? `${row.pupil.first_name} ${row.pupil.last_name}` : '',
     category: row.payment_allocations?.[0]?.invoice?.category?.name || 'Unallocated',
     method: row.payment_method, date: row.paid_at.slice(0, 10), reference: row.reference || '',
   }))
@@ -133,7 +134,7 @@ export async function createPupil(form, adminRole = 'main_admin') {
 
   if (adminRole === 'payment_admin') {
     const { data, error } = await client.rpc('register_pupil_with_bus_area', {
-      p_admission_number: form.admissionNo,
+      p_admission_number: null,
       p_first_name: form.firstName,
       p_last_name: form.lastName,
       p_admission_type: form.admissionType,
@@ -184,7 +185,6 @@ export async function createPupil(form, adminRole = 'main_admin') {
   if (form.usesBus && !busSchedule) throw new Error(`${form.className} does not have a school-bus amount configured for ${term.name}. Open Settings → Fee schedule first.`)
 
   const { data: pupil, error: pupilError } = await client.from('pupils').insert({
-    admission_number: form.admissionNo,
     first_name: form.firstName,
     last_name: form.lastName,
     admission_type: form.admissionType,
@@ -231,6 +231,11 @@ export async function createPupil(form, adminRole = 'main_admin') {
     if (error) throw error
   }
   return pupil.id
+}
+
+export async function deletePupils(ids) {
+  const { error } = await requireClient().rpc('archive_pupils', { p_pupil_ids: ids })
+  if (error) throw error
 }
 
 export async function updatePupil(form, adminRole = 'main_admin') {
@@ -288,7 +293,6 @@ export async function updatePupil(form, adminRole = 'main_admin') {
   const { error: pupilError } = await client
     .from('pupils')
     .update({
-      admission_number: form.admissionNo,
       first_name: form.firstName,
       last_name: form.lastName,
       admission_type: form.admissionType,

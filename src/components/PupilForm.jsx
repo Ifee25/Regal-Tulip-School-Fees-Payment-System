@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { Camera, Check, Upload } from 'lucide-react'
 
 const initialForm = {
-  firstName: '', lastName: '', admissionNo: '', admissionType: 'New', className: '',
+  firstName: '', lastName: '', admissionType: 'New', className: '',
   dateOfBirth: '', gender: '', guardianName: '', guardianPhone: '', stateOfOrigin: '',
   address: '', height: '', weight: '', bloodGroup: '', complexion: '', usesBus: false,
   busRoute: '', feeSection: 'Inside Estate', farAwayLocation: '', photoUrl: '',
@@ -62,7 +62,7 @@ export default function PupilForm({ onSubmit, onCancel, initialPupil = null }) {
         <div className="form-grid">
           <Field label="First name"><input required value={form.firstName} onChange={(e) => update('firstName', e.target.value)} placeholder="e.g. Amara" /></Field>
           <Field label="Last name"><input required value={form.lastName} onChange={(e) => update('lastName', e.target.value)} placeholder="e.g. Okafor" /></Field>
-          <Field label="Admission number"><input required value={form.admissionNo} onChange={(e) => update('admissionNo', e.target.value)} placeholder="RTS/2026/001" /></Field>
+          <Field label="Admission number"><input readOnly value={initialPupil?.admissionNo ?? 'Assigned automatically'} /></Field>
           <Field label="Admission type"><select value={form.admissionType} onChange={(e) => update('admissionType', e.target.value)}><option>New</option><option>Returning</option></select></Field>
           <Field label="Class"><select required value={form.className} onChange={(e) => update('className', e.target.value)}><option value="">Select class</option>{['Creche','Play Group','Nursery 1','Nursery 2','Nursery 3','Primary 1','Primary 2','Primary 3','Primary 4','Primary 5','Primary 6'].map((x) => <option key={x}>{x}</option>)}</select></Field>
           <Field label="Date of birth"><input required type="date" value={form.dateOfBirth} onChange={(e) => update('dateOfBirth', e.target.value)} /></Field>

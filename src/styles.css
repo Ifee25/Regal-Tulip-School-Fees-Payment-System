@@ -381,3 +381,5 @@ input, select, textarea { font-size: 11px; }
   .print-paid { color: #237047; }.print-unpaid { color: #a74141; }
   .print-footer { display: flex; justify-content: space-between; border-top: 1px solid #aebbb4; margin-top: 15px; padding-top: 10px; color: #66766e; font-size: 8px; }
 }
+
+.button-danger { color: white; background: #a52632; }
