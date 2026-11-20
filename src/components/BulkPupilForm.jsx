@@ -12,8 +12,8 @@ function parsePupils(value) {
     const [firstName, lastName, guardianPhone] = fields
     pupils.push({ firstName, lastName, guardianPhone })
   }
-  if (pupils.length < 1 || pupils.length > 250) {
-    throw new Error('Enter between 1 and 250 pupils per batch.')
+  if (pupils.length < 1 || pupils.length > 400) {
+    throw new Error('Enter between 1 and 400 pupils per batch.')
   }
   return pupils
 }
@@ -61,7 +61,7 @@ export default function BulkPupilForm({ onSubmit, onClose }) {
             placeholder="Amara, Okafor, 08012345678" required />
         </label>
         <p id="bulk-pupil-format" className="muted">
-          Paste up to 250 spreadsheet rows without the header, or type one pupil per line.
+          Paste up to 400 spreadsheet rows without the header, or type one pupil per line.
           Use the order first name, last name, parent phone number.
         </p>
         {error && <p className="form-notice" role="alert">{error}</p>}
