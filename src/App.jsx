@@ -299,11 +299,12 @@ function App() {
         }
         setPupils((current) => [{ ...pupil, admissionNo }, ...current])
       }
-      notify(`${pupil.firstName} ${pupil.lastName} was registered successfully`)
       return true
     } catch (error) {
-      notify(error.message || 'Pupil registration failed.')
-      return false
+      if (error.code === '23505') {
+        throw new Error('This registration could not be saved because a matching record already exists. Check the Pupils list before trying again.')
+      }
+      throw new Error(readableError(error, 'Pupil registration failed. Please try again.'))
     }
   }
 

@@ -26,7 +26,9 @@ export default function PupilForm({ onSubmit, onCancel, initialPupil = null }) {
   const [photoPreview, setPhotoPreview] = useState(initialPupil?.photoUrl || '')
   const [submitting, setSubmitting] = useState(false)
   const [registered, setRegistered] = useState(false)
+  const [submitError, setSubmitError] = useState('')
   const fileRef = useRef(null)
+  const submissionStarted = useRef(false)
   const update = (name, value) => setForm((current) => ({ ...current, [name]: value }))
 
   function handlePhoto(event) {
@@ -40,13 +42,23 @@ export default function PupilForm({ onSubmit, onCancel, initialPupil = null }) {
 
   async function submit(event) {
     event.preventDefault()
-    if (submitting || registered) return
+    if (submissionStarted.current) return
+    submissionStarted.current = true
     setSubmitting(true)
-    const succeeded = await onSubmit({ ...form, photoUrl: photoPreview, id: initialPupil?.id || crypto.randomUUID(), feePaid: initialPupil?.feePaid || 0, busPaid: initialPupil?.busPaid || 0 })
-    setSubmitting(false)
-    if (!succeeded) return
-    setRegistered(true)
-    window.setTimeout(onCancel, 1400)
+    setSubmitError('')
+    try {
+      const succeeded = await onSubmit({ ...form, photoUrl: photoPreview, id: initialPupil?.id || crypto.randomUUID(), feePaid: initialPupil?.feePaid || 0, busPaid: initialPupil?.busPaid || 0 })
+      if (succeeded) {
+        setRegistered(true)
+        window.setTimeout(onCancel, 1400)
+        return
+      }
+    } catch (error) {
+      setSubmitError(error.message || 'Registration could not be completed. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+    submissionStarted.current = false
   }
 
   return (
@@ -99,6 +111,7 @@ export default function PupilForm({ onSubmit, onCancel, initialPupil = null }) {
           </>}
         </div>
       </div>
+      {submitError && <p className="form-notice" role="alert">{submitError}</p>}
       <footer className="modal-actions"><button type="button" className="button button-ghost" onClick={onCancel} disabled={submitting || registered}>Cancel</button><button className={`button ${registered ? 'button-success' : 'button-primary'}`} disabled={submitting || registered}><Check size={18} />{registered ? (editing ? 'Successfully updated' : 'Successfully registered') : submitting ? (editing ? 'Updating…' : 'Registering…') : (editing ? 'Save pupil changes' : 'Register pupil')}</button></footer>
     </form>
   )
