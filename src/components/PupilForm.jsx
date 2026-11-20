@@ -20,6 +20,10 @@ export default function PupilForm({ onSubmit, onCancel, initialPupil = null }) {
   const [form, setForm] = useState(() => initialPupil ? {
     ...initialForm,
     ...initialPupil,
+    className: initialPupil.profilePending && initialPupil.className === 'Not assigned' ? '' : initialPupil.className,
+    stateOfOrigin: initialPupil.stateOfOrigin || '',
+    bloodGroup: initialPupil.bloodGroup || '',
+    complexion: initialPupil.complexion || '',
     height: initialPupil.height || '',
     weight: initialPupil.weight || '',
   } : initialForm)

@@ -102,9 +102,10 @@ export async function loadSchoolData(adminRole = 'main_admin') {
     return {
       id: item.id, admissionNo: item.admission_number, firstName: item.first_name,
       lastName: item.last_name, className: item.class?.name || 'Not assigned',
-      dateOfBirth: item.date_of_birth, gender: item.gender, guardianName: item.guardian_name,
+      profilePending: item.profile_pending ?? false,
+      dateOfBirth: item.date_of_birth || '', gender: item.gender || '', guardianName: item.guardian_name || '',
       guardianPhone: item.guardian_phone, stateOfOrigin: item.state_of_origin,
-      address: item.house_address, height: item.height_cm, weight: item.weight_kg,
+      address: item.house_address || '', height: item.height_cm, weight: item.weight_kg,
       bloodGroup: item.blood_group, complexion: item.complexion,
       feeSection: item.fee_section, farAwayLocation: item.far_away_location || '',
       admissionType: item.admission_type, usesBus: Boolean(item.bus_enrollments?.length),
@@ -233,6 +234,15 @@ export async function createPupil(form, adminRole = 'main_admin') {
   return pupil.id
 }
 
+export async function bulkRegisterPupils(pupils) {
+  const { error } = await requireClient().rpc('bulk_register_pupils', {
+    p_pupils: pupils.map(({ firstName, lastName, guardianPhone }) => ({
+      first_name: firstName, last_name: lastName, guardian_phone: guardianPhone,
+    })),
+  })
+  if (error) throw error
+}
+
 export async function deletePupils(ids) {
   const { error } = await requireClient().rpc('archive_pupils', { p_pupil_ids: ids })
   if (error) throw error
@@ -256,6 +266,34 @@ export async function updatePupil(form, adminRole = 'main_admin') {
       .from('pupil-photos')
       .upload(photoPath, form.photoFile, { contentType: form.photoFile.type, upsert: false })
     if (error) throw error
+  }
+
+  const details = {
+    first_name: form.firstName,
+    last_name: form.lastName,
+    admission_type: form.admissionType,
+    class_id: classRow.id,
+    date_of_birth: form.dateOfBirth,
+    gender: form.gender,
+    guardian_name: form.guardianName,
+    guardian_phone: form.guardianPhone,
+    state_of_origin: form.stateOfOrigin || null,
+    house_address: form.address,
+    height_cm: form.height || null,
+    weight_kg: form.weight || null,
+    blood_group: form.bloodGroup || null,
+    complexion: form.complexion || null,
+    fee_section: form.usesBus ? form.feeSection : 'Inside Estate',
+    far_away_location: form.usesBus && form.feeSection === 'Far Away' ? form.farAwayLocation.trim() : null,
+    photo_path: photoPath,
+  }
+
+  if (form.profilePending) {
+    const { error } = await client.rpc('complete_pupil_profile', {
+      p_pupil_id: form.id, p_details: details, p_uses_bus: form.usesBus, p_bus_route: form.busRoute || null,
+    })
+    if (error) throw error
+    return form.id
   }
 
   let tuitionSchedule = null
@@ -292,25 +330,7 @@ export async function updatePupil(form, adminRole = 'main_admin') {
 
   const { error: pupilError } = await client
     .from('pupils')
-    .update({
-      first_name: form.firstName,
-      last_name: form.lastName,
-      admission_type: form.admissionType,
-      class_id: classRow.id,
-      date_of_birth: form.dateOfBirth,
-      gender: form.gender,
-      guardian_name: form.guardianName,
-      guardian_phone: form.guardianPhone,
-      state_of_origin: form.stateOfOrigin || null,
-      house_address: form.address,
-      height_cm: form.height || null,
-      weight_kg: form.weight || null,
-      blood_group: form.bloodGroup || null,
-      complexion: form.complexion || null,
-      fee_section: form.usesBus ? form.feeSection : 'Inside Estate',
-      far_away_location: form.usesBus && form.feeSection === 'Far Away' ? form.farAwayLocation.trim() : null,
-      photo_path: photoPath,
-    })
+    .update(details)
     .eq('id', form.id)
   if (pupilError) throw pupilError
 

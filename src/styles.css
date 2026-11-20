@@ -61,7 +61,7 @@ kbd { color: #8d9993; border: 1px solid #dce2dd; background: #f7f9f7; padding: 4
 .eyebrow { text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: #b48725; display: block; margin-bottom: 7px; }
 .page-heading h1 { font-family: 'Playfair Display'; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.5px; margin-bottom: 5px; color: #173d2f; }
 .page-heading p { color: var(--muted); font-size: 12px; margin: 0; }
-.heading-actions { display: flex; gap: 9px; }
+.heading-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .button { border: 0; border-radius: 8px; padding: 10px 15px; font-weight: 600; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; transition: .18s ease; }
 .button:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(18,60,43,.1); }
 .button-primary { color: white; background: var(--forest); }

@@ -12,11 +12,12 @@ import Logo from './components/Logo'
 import Modal from './components/Modal'
 import PaymentForm from './components/PaymentForm'
 import PupilForm from './components/PupilForm'
+import BulkPupilForm from './components/BulkPupilForm'
 import StatusBadge from './components/StatusBadge'
 import { getPaymentStatus } from './utils/payments'
 import { demoPayments, demoPupils } from './data/demoData'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import { createPayment, createPupil, deletePupils, loadSchoolData, updatePupil } from './lib/schoolApi'
+import { bulkRegisterPupils, createPayment, createPupil, deletePupils, loadSchoolData, updatePupil } from './lib/schoolApi'
 
 const currency = (value) => `₦${Number(value || 0).toLocaleString()}`
 const readableError = (error, fallback) => {
@@ -267,14 +268,16 @@ function App() {
     const haystack = `${pupil.firstName} ${pupil.lastName} ${pupil.admissionNo} ${pupil.guardianPhone}`.toLowerCase()
     const matchesSearch = haystack.includes(search.toLowerCase())
     const matchesClass = classFilter === 'All classes' || pupil.className === classFilter
-    const matchesStatus = statusFilter === 'All statuses' || getPaymentStatus(pupil.feePaid, pupil.feeExpected) === statusFilter
+    const matchesStatus = statusFilter === 'All statuses' || (!pupil.profilePending && getPaymentStatus(pupil.feePaid, pupil.feeExpected) === statusFilter)
     return matchesSearch && matchesClass && matchesStatus
   }), [pupils, search, classFilter, statusFilter])
 
+  const completedPupils = useMemo(() => pupils.filter((pupil) => !pupil.profilePending), [pupils])
+
   const stats = useMemo(() => {
-    const collected = pupils.reduce((sum, pupil) => sum + Number(pupil.feePaid || 0) + Number(pupil.busPaid || 0), 0)
-    const expected = pupils.reduce((sum, pupil) => sum + Number(pupil.feeExpected || 0) + Number(pupil.busExpected || 0), 0)
-    const feeStatuses = pupils.map((pupil) => getPaymentStatus(pupil.feePaid, pupil.feeExpected))
+    const collected = completedPupils.reduce((sum, pupil) => sum + Number(pupil.feePaid || 0) + Number(pupil.busPaid || 0), 0)
+    const expected = completedPupils.reduce((sum, pupil) => sum + Number(pupil.feeExpected || 0) + Number(pupil.busExpected || 0), 0)
+    const feeStatuses = completedPupils.map((pupil) => getPaymentStatus(pupil.feePaid, pupil.feeExpected))
     return {
       total: pupils.length,
       newPupils: pupils.filter((pupil) => pupil.admissionType === 'New').length,
@@ -283,7 +286,30 @@ function App() {
       notPaid: feeStatuses.filter((status) => status === 'Not Paid').length,
       collected, outstanding: expected - collected,
     }
-  }, [pupils])
+  }, [completedPupils, pupils])
+
+  function nextDemoAdmissionNo() {
+    const released = releasedDemoAdmissionNumbers.current.shift()
+    if (released) return released
+    const year = new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Lagos' }).format(new Date())
+    const number = String(++demoAdmissionSequence.current).padStart(3, '0')
+    return 'RTS/' + year + '/' + number
+  }
+
+  async function addBulkPupils(entries) {
+    if (isSupabaseConfigured) {
+      await bulkRegisterPupils(entries)
+      await refreshSchoolData()
+      return
+    }
+    const newPupils = entries.map((entry) => ({
+      ...entry, id: crypto.randomUUID(), admissionNo: nextDemoAdmissionNo(),
+      profilePending: true, className: 'Not assigned', admissionType: 'New',
+      dateOfBirth: '', gender: '', guardianName: '', address: '',
+      usesBus: false, feeExpected: 0, feePaid: 0, busExpected: 0, busPaid: 0,
+    }))
+    setPupils((current) => [...newPupils, ...current])
+  }
 
   async function addPupil(pupil) {
     try {
@@ -291,12 +317,7 @@ function App() {
         await createPupil(pupil, adminRole)
         await refreshSchoolData()
       } else {
-        let admissionNo = releasedDemoAdmissionNumbers.current.shift()
-        if (!admissionNo) {
-          const year = new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Lagos' }).format(new Date())
-          const number = String(++demoAdmissionSequence.current).padStart(3, '0')
-          admissionNo = 'RTS/' + year + '/' + number
-        }
+        const admissionNo = nextDemoAdmissionNo()
         setPupils((current) => [{ ...pupil, admissionNo }, ...current])
       }
       return true
@@ -352,8 +373,14 @@ function App() {
 
   async function editPupil(pupil) {
     try {
-      await updatePupil(pupil, adminRole)
-      await refreshSchoolData()
+      if (isSupabaseConfigured) {
+        await updatePupil(pupil, adminRole)
+        await refreshSchoolData()
+      } else {
+        setPupils((current) => current.map((record) => record.id === pupil.id
+          ? { ...pupil, profilePending: false }
+          : record))
+      }
       notify(`${pupil.firstName} ${pupil.lastName}'s information was updated successfully`)
       return true
     } catch (error) {
@@ -369,7 +396,7 @@ function App() {
 
   function exportReport() {
     const header = ['Admission No', 'Pupil', 'Class', 'Expected', 'Paid', 'Outstanding', 'Status']
-    const rows = pupils.map((p) => [p.admissionNo, `${p.firstName} ${p.lastName}`, p.className, currency(p.feeExpected), currency(p.feePaid), currency(Math.max(0, p.feeExpected - p.feePaid)), getPaymentStatus(p.feePaid, p.feeExpected)])
+    const rows = completedPupils.map((p) => [p.admissionNo, `${p.firstName} ${p.lastName}`, p.className, currency(p.feeExpected), currency(p.feePaid), currency(Math.max(0, p.feeExpected - p.feePaid)), getPaymentStatus(p.feePaid, p.feeExpected)])
     const csv = [header, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n')
     const link = document.createElement('a')
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
@@ -434,23 +461,25 @@ function App() {
             setStatusFilter={setStatusFilter}
             setSelectedPupil={setSelectedPupil}
             openRegistration={() => setModal('pupil')}
+            openBulkRegistration={() => setModal('bulk-pupils')}
             openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }}
             onDelete={removePupils}
           />}
-          {adminRole === 'main_admin' && activePage === 'fees' && <FeesPage pupils={filteredPupils} search={search} setSearch={setSearch} setSelectedPupil={setSelectedPupil} openPayment={(pupil) => { setSelectedPupil(pupil || null); setModal('payment') }} onPrint={() => window.print()} />}
+          {adminRole === 'main_admin' && activePage === 'fees' && <FeesPage pupils={filteredPupils.filter((pupil) => !pupil.profilePending)} search={search} setSearch={setSearch} setSelectedPupil={setSelectedPupil} openPayment={(pupil) => { setSelectedPupil(pupil || null); setModal('payment') }} onPrint={() => window.print()} />}
           {adminRole === 'main_admin' && activePage === 'bus' && <BusPage pupils={pupils.filter((pupil) => pupil.usesBus)} openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }} />}
-          {adminRole === 'main_admin' && activePage === 'reports' && <ReportsPage pupils={pupils} payments={payments} onExport={exportReport} />}
+          {adminRole === 'main_admin' && activePage === 'reports' && <ReportsPage pupils={completedPupils} payments={payments} onExport={exportReport} />}
           {adminRole === 'main_admin' && activePage === 'settings' && <SettingsPage refreshSchoolData={refreshSchoolData} notify={notify} />}
         </div>
       </main>
 
       {menuOpen && <div className="mobile-overlay" onClick={() => setMenuOpen(false)} />}
       {modal === 'pupil' && <Modal title="Register a pupil" subtitle="Create a complete pupil record for this academic session." onClose={() => setModal(null)} wide><PupilForm onSubmit={addPupil} onCancel={() => setModal(null)} /></Modal>}
-      {modal === 'edit-pupil' && selectedPupil && <Modal title="Edit pupil information" subtitle="Update personal details and school-bus enrollment." onClose={() => { setModal(null); setSelectedPupil(null) }} wide><PupilForm initialPupil={selectedPupil} onSubmit={editPupil} onCancel={() => { setModal(null); setSelectedPupil(null) }} /></Modal>}
-      {modal === 'payment' && <Modal title="Record a payment" subtitle="Enter the amount received by the school and the payment method." onClose={() => setModal(null)}><PaymentForm pupils={pupils} preselectedPupil={selectedPupil} fullFinancialAccess={adminRole === 'main_admin'} onSubmit={addPayment} onCancel={() => setModal(null)} /></Modal>}
-      {selectedPupil && !modal && <><button className="drawer-edit-launch button button-secondary" onClick={() => setModal('edit-pupil')}><Pencil size={17} /> Edit pupil</button><PupilDrawer pupil={selectedPupil} payments={payments.filter((item) => item.pupilId === selectedPupil.id)} fullFinancialAccess={adminRole === 'main_admin'} onClose={() => setSelectedPupil(null)} onPayment={() => setModal('payment')} /></>}
+      {modal === 'bulk-pupils' && <BulkPupilForm onSubmit={addBulkPupils} onClose={() => setModal(null)} />}
+      {modal === 'edit-pupil' && selectedPupil && <Modal title={selectedPupil.profilePending ? "Complete pupil profile" : "Edit pupil information"} subtitle="Update personal details and school-bus enrollment." onClose={() => { setModal(null); setSelectedPupil(null) }} wide><PupilForm initialPupil={selectedPupil} onSubmit={editPupil} onCancel={() => { setModal(null); setSelectedPupil(null) }} /></Modal>}
+      {modal === 'payment' && <Modal title="Record a payment" subtitle="Enter the amount received by the school and the payment method." onClose={() => setModal(null)}><PaymentForm pupils={completedPupils} preselectedPupil={selectedPupil} fullFinancialAccess={adminRole === 'main_admin'} onSubmit={addPayment} onCancel={() => setModal(null)} /></Modal>}
+      {selectedPupil && !modal && <><button className="drawer-edit-launch button button-secondary" onClick={() => setModal('edit-pupil')}><Pencil size={17} /> {selectedPupil.profilePending ? "Complete profile" : "Edit pupil"}</button><PupilDrawer pupil={selectedPupil} payments={payments.filter((item) => item.pupilId === selectedPupil.id)} fullFinancialAccess={adminRole === 'main_admin'} onClose={() => setSelectedPupil(null)} onPayment={() => setModal('payment')} /></>}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
-      {adminRole === 'main_admin' && <PaymentPrintReport pupils={pupils} />}
+      {adminRole === 'main_admin' && <PaymentPrintReport pupils={completedPupils} />}
     </div>
   )
 }
@@ -528,10 +557,10 @@ function Dashboard({ adminUsername, stats, pupils, payments, setSelectedPupil, o
     </section>
     <section className="panel">
       <div className="panel-header"><div><h2>Pupils requiring attention</h2><p>Incomplete school-fee or school-bus payments</p></div><button className="text-button" onClick={() => navigate('pupils')}>View pupils <ChevronRight size={15} /></button></div>
-      <AttentionPupilTable pupils={pupils.filter((pupil) =>
+      <AttentionPupilTable pupils={pupils.filter((pupil) => !pupil.profilePending && (
         getPaymentStatus(pupil.feePaid, pupil.feeExpected) !== 'Paid'
         || (pupil.usesBus && getPaymentStatus(pupil.busPaid, pupil.busExpected) !== 'Paid')
-      ).slice(0, 5)} onSelect={setSelectedPupil} />
+      )).slice(0, 5)} onSelect={setSelectedPupil} />
     </section>
   </>
 }
@@ -540,7 +569,7 @@ function StatCard({ title, value, note, icon: Icon, tone, breakdown }) {
   return <article className={`stat-card ${breakdown ? 'stat-card-breakdown' : ''}`}><div className={`stat-icon ${tone}`}><Icon size={21} /></div><div className="stat-body"><span>{title}</span><strong>{value}</strong>{note && <small>{note}</small>}{breakdown && <div className="stat-breakdown">{breakdown.map((item) => <span className={item.tone} key={item.label}><b>{item.value}</b>{item.label}</span>)}</div>}</div><span className="stat-spark">↗</span></article>
 }
 
-function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration, openPayment, onDelete }) {
+function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration, openBulkRegistration, openPayment, onDelete }) {
   const [selectedIds, setSelectedIds] = useState([])
   const [pendingDelete, setPendingDelete] = useState([])
   const [deleting, setDeleting] = useState(false)
@@ -574,6 +603,7 @@ function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilte
         : "Register pupils, view their profiles and record amounts received by the school."}
       action={<div className="heading-actions">
         {selected.length > 0 && <button className="button button-danger" onClick={() => setPendingDelete(selected)}>Delete selected ({selected.length})</button>}
+        <button className="button button-secondary" onClick={openBulkRegistration}><Users size={18} /> Bulk register</button>
         <button className="button button-primary" onClick={openRegistration}><UserPlus size={18} /> Register pupil</button>
       </div>}
     />
@@ -623,7 +653,7 @@ function PaymentAdminDashboard({ pupils, openPayment }) {
 }
 
 function PaymentEntryTable({ pupils, onView, openPayment, selectedIds, onTogglePupil }) {
-  return <div className="table-wrap"><table><thead><tr><th scope="col">Select</th><th>Pupil</th><th>Admission no.</th><th>Class</th><th>Part-payment figures</th><th></th></tr></thead><tbody>{pupils.map((pupil) => <tr key={pupil.id}><PupilSelectionCell pupil={pupil} selected={selectedIds.includes(pupil.id)} onTogglePupil={onTogglePupil} /><td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.financialVisible ? <div className="partial-inline"><span>Paid: {currency(pupil.feePaid + pupil.busPaid)}</span><strong>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div> : <span className="restricted-value">Financial figures restricted</span>}</td><td><div className="row-actions"><button className="text-button" onClick={() => onView(pupil)}>View profile</button><button className="button button-secondary" onClick={() => openPayment(pupil)}>Record payment</button></div></td></tr>)}</tbody></table></div>
+  return <div className="table-wrap"><table><thead><tr><th scope="col">Select</th><th>Pupil</th><th>Admission no.</th><th>Class</th><th>Part-payment figures</th><th></th></tr></thead><tbody>{pupils.map((pupil) => <tr key={pupil.id}><PupilSelectionCell pupil={pupil} selected={selectedIds.includes(pupil.id)} onTogglePupil={onTogglePupil} /><td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.profilePending ? "Profile incomplete" : pupil.className}</td><td>{pupil.profilePending ? "Awaiting profile completion" : pupil.financialVisible ? <div className="partial-inline"><span>Paid: {currency(pupil.feePaid + pupil.busPaid)}</span><strong>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div> : <span className="restricted-value">Financial figures restricted</span>}</td><td><div className="row-actions"><button className="text-button" onClick={() => onView(pupil)}>View profile</button>{!pupil.profilePending && <button className="button button-secondary" onClick={() => openPayment(pupil)}>Record payment</button>}</div></td></tr>)}</tbody></table></div>
 }
 
 function PartPaymentTable({ pupils, onPayment }) {
@@ -665,7 +695,7 @@ function PupilSelectionCell({ pupil, selected, onTogglePupil }) {
 function PupilTable({ pupils, onSelect, selectedIds, onTogglePupil }) {
   return <div className="table-wrap"><table><thead><tr>{onTogglePupil && <th scope="col">Select</th>}<th>Pupil</th><th>Admission no.</th><th>Class</th><th>School Bus</th><th>School fees</th><th>Amount paid</th><th>Outstanding balance</th><th></th></tr></thead><tbody>{pupils.map((pupil) => { const balance = Math.max(0, pupil.feeExpected - pupil.feePaid); const status = getPaymentStatus(pupil.feePaid, pupil.feeExpected); return <tr key={pupil.id} onClick={() => onSelect(pupil)}>
     {onTogglePupil && <PupilSelectionCell pupil={pupil} selected={selectedIds.includes(pupil.id)} onTogglePupil={onTogglePupil} />}
-    <td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.className}</td><td>{pupil.usesBus ? <><span className="fee-section-label">{pupil.feeSection || 'Bus area not set'}</span>{pupil.feeSection === 'Far Away' && <small className="table-sub">{pupil.farAwayLocation}</small>}</> : <span className="restricted-value">Not using bus</span>}</td><td><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /></td><td><strong>{currency(pupil.feePaid)}</strong><small className="table-sub">of {currency(pupil.feeExpected)}</small></td><td><strong className={status === 'Part Payment' ? 'balance-partial' : status === 'Not Paid' ? 'balance-unpaid' : 'balance-clear'}>{currency(balance)}</strong>{status === 'Part Payment' && <small className="table-sub">still to be paid</small>}</td><td><button className="row-button"><ChevronRight size={17} /></button></td></tr> })}</tbody></table></div>
+    <td><div className="pupil-cell"><Avatar pupil={pupil} /><div><strong>{pupil.firstName} {pupil.lastName}</strong><span>{pupil.guardianPhone}</span></div></div></td><td><span className="mono">{pupil.admissionNo}</span></td><td>{pupil.profilePending ? "Profile incomplete" : pupil.className}</td><td>{pupil.usesBus ? <><span className="fee-section-label">{pupil.feeSection || 'Bus area not set'}</span>{pupil.feeSection === 'Far Away' && <small className="table-sub">{pupil.farAwayLocation}</small>}</> : <span className="restricted-value">Not using bus</span>}</td>{pupil.profilePending ? <td colSpan={3} className="muted">Awaiting profile completion</td> : <><td><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /></td><td><strong>{currency(pupil.feePaid)}</strong><small className="table-sub">of {currency(pupil.feeExpected)}</small></td><td><strong className={status === 'Part Payment' ? 'balance-partial' : status === 'Not Paid' ? 'balance-unpaid' : 'balance-clear'}>{currency(balance)}</strong>{status === 'Part Payment' && <small className="table-sub">still to be paid</small>}</td></>}<td><button className="row-button"><ChevronRight size={17} /></button></td></tr> })}</tbody></table></div>
 }
 
 function FeesPage({ pupils, search, setSearch, setSelectedPupil, openPayment, onPrint }) {
@@ -747,15 +777,15 @@ function SettingsPage({ refreshSchoolData, notify }) {
 
 function PupilDrawer({ pupil, payments, fullFinancialAccess, onClose, onPayment }) {
   const details = [
-    ['Admission number', pupil.admissionNo], ['Class', pupil.className], ['Age', `${age(pupil.dateOfBirth)} years`],
+    ['Admission number', pupil.admissionNo], ['Class', pupil.className], ['Age', pupil.dateOfBirth ? age(pupil.dateOfBirth) + ' years' : ''],
     ['Gender', pupil.gender], ['Guardian', pupil.guardianName], ['Guardian phone', pupil.guardianPhone],
     ['State of origin', pupil.stateOfOrigin], ['House address', pupil.address],
     ['Fee section', pupil.feeSection === 'Far Away' ? `Far Away · ${pupil.farAwayLocation}` : pupil.feeSection],
     ['Height', pupil.height ? `${pupil.height} cm` : '—'],
     ['Weight', pupil.weight ? `${pupil.weight} kg` : '—'], ['Blood group', pupil.bloodGroup || '—'], ['Complexion', pupil.complexion || '—'],
   ]
-  const hasVisiblePartPayment = pupil.financialVisible && !fullFinancialAccess
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><button className="drawer-close icon-button" onClick={onClose}><X /></button><div className="drawer-profile"><Avatar pupil={pupil} large /><span>{pupil.admissionType} pupil</span><h2>{pupil.firstName} {pupil.lastName}</h2><p>{pupil.className} · {pupil.admissionNo}</p></div><div className="drawer-actions"><button className="button button-primary" onClick={onPayment}><Plus size={17} /> Record payment</button></div>{fullFinancialAccess && <section className="drawer-section"><h3>Payment position</h3><div className="drawer-payments"><div><span>School fees</span><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /><strong>{currency(pupil.feePaid)} <small>/ {currency(pupil.feeExpected)}</small></strong><em>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid))}</em></div><div><span>School bus</span>{pupil.usesBus ? <StatusBadge paid={pupil.busPaid} expected={pupil.busExpected} /> : <span className="mini-chip">Not enrolled</span>}<strong>{currency(pupil.busPaid)} <small>/ {currency(pupil.busExpected)}</small></strong>{pupil.usesBus && <em>Outstanding: {currency(Math.max(0, pupil.busExpected - pupil.busPaid))}</em>}</div></div></section>}{hasVisiblePartPayment && <section className="drawer-section"><h3>Part-payment figures</h3><div className="secondary-balance"><div><span>Amount paid</span><strong>{currency(pupil.feePaid + pupil.busPaid)}</strong></div><div><span>Outstanding</span><strong>{currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div></div></section>}<section className="drawer-section"><h3>Pupil details</h3><dl>{details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>{fullFinancialAccess && <section className="drawer-section"><h3>Recent payments</h3>{payments.length ? payments.map((p) => <div className="drawer-transaction" key={p.id}><div><strong>{p.category}</strong><span>{p.date} · {p.method}</span></div><strong>{currency(p.amount)}</strong></div>) : <p className="muted">No payments recorded.</p>}</section>}</aside></div>
+  const hasVisiblePartPayment = pupil.financialVisible && !fullFinancialAccess && !pupil.profilePending
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><button className="drawer-close icon-button" onClick={onClose}><X /></button><div className="drawer-profile"><Avatar pupil={pupil} large /><span>{pupil.profilePending ? "Profile incomplete" : pupil.admissionType + " pupil"}</span><h2>{pupil.firstName} {pupil.lastName}</h2><p>{pupil.className} · {pupil.admissionNo}</p></div>{!pupil.profilePending && <div className="drawer-actions"><button className="button button-primary" onClick={onPayment}><Plus size={17} /> Record payment</button></div>}{!pupil.profilePending && fullFinancialAccess && <section className="drawer-section"><h3>Payment position</h3><div className="drawer-payments"><div><span>School fees</span><StatusBadge paid={pupil.feePaid} expected={pupil.feeExpected} /><strong>{currency(pupil.feePaid)} <small>/ {currency(pupil.feeExpected)}</small></strong><em>Outstanding: {currency(Math.max(0, pupil.feeExpected - pupil.feePaid))}</em></div><div><span>School bus</span>{pupil.usesBus ? <StatusBadge paid={pupil.busPaid} expected={pupil.busExpected} /> : <span className="mini-chip">Not enrolled</span>}<strong>{currency(pupil.busPaid)} <small>/ {currency(pupil.busExpected)}</small></strong>{pupil.usesBus && <em>Outstanding: {currency(Math.max(0, pupil.busExpected - pupil.busPaid))}</em>}</div></div></section>}{hasVisiblePartPayment && <section className="drawer-section"><h3>Part-payment figures</h3><div className="secondary-balance"><div><span>Amount paid</span><strong>{currency(pupil.feePaid + pupil.busPaid)}</strong></div><div><span>Outstanding</span><strong>{currency(Math.max(0, pupil.feeExpected - pupil.feePaid) + Math.max(0, pupil.busExpected - pupil.busPaid))}</strong></div></div></section>}<section className="drawer-section"><h3>Pupil details</h3><dl>{details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "Not provided"}</dd></div>)}</dl></section>{!pupil.profilePending && fullFinancialAccess && <section className="drawer-section"><h3>Recent payments</h3>{payments.length ? payments.map((p) => <div className="drawer-transaction" key={p.id}><div><strong>{p.category}</strong><span>{p.date} · {p.method}</span></div><strong>{currency(p.amount)}</strong></div>) : <p className="muted">No payments recorded.</p>}</section>}</aside></div>
 }
 
 export default App
