@@ -462,6 +462,8 @@ function App() {
             setSelectedPupil={setSelectedPupil}
             openRegistration={() => setModal('pupil')}
             openBulkRegistration={() => setModal('bulk-pupils')}
+            onPrint={() => window.print()}
+            canPrint={!dataLoading && pupils.length > 0}
             openPayment={(pupil) => { setSelectedPupil(pupil); setModal('payment') }}
             onDelete={removePupils}
           />}
@@ -479,7 +481,9 @@ function App() {
       {modal === 'payment' && <Modal title="Record a payment" subtitle="Enter the amount received by the school and the payment method." onClose={() => setModal(null)}><PaymentForm pupils={completedPupils} preselectedPupil={selectedPupil} fullFinancialAccess={adminRole === 'main_admin'} onSubmit={addPayment} onCancel={() => setModal(null)} /></Modal>}
       {selectedPupil && !modal && <><button className="drawer-edit-launch button button-secondary" onClick={() => setModal('edit-pupil')}><Pencil size={17} /> {selectedPupil.profilePending ? "Complete profile" : "Edit pupil"}</button><PupilDrawer pupil={selectedPupil} payments={payments.filter((item) => item.pupilId === selectedPupil.id)} fullFinancialAccess={adminRole === 'main_admin'} onClose={() => setSelectedPupil(null)} onPayment={() => setModal('payment')} /></>}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
-      {adminRole === 'main_admin' && <PaymentPrintReport pupils={completedPupils} />}
+      {activePage === 'pupils'
+        ? <PupilPrintReport pupils={pupils} />
+        : adminRole === 'main_admin' && <PaymentPrintReport pupils={completedPupils} />}
     </div>
   )
 }
@@ -569,7 +573,7 @@ function StatCard({ title, value, note, icon: Icon, tone, breakdown }) {
   return <article className={`stat-card ${breakdown ? 'stat-card-breakdown' : ''}`}><div className={`stat-icon ${tone}`}><Icon size={21} /></div><div className="stat-body"><span>{title}</span><strong>{value}</strong>{note && <small>{note}</small>}{breakdown && <div className="stat-breakdown">{breakdown.map((item) => <span className={item.tone} key={item.label}><b>{item.value}</b>{item.label}</span>)}</div>}</div><span className="stat-spark">↗</span></article>
 }
 
-function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration, openBulkRegistration, openPayment, onDelete }) {
+function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilter, setClassFilter, statusFilter, setStatusFilter, setSelectedPupil, openRegistration, openBulkRegistration, openPayment, onPrint, canPrint, onDelete }) {
   const [selectedIds, setSelectedIds] = useState([])
   const [pendingDelete, setPendingDelete] = useState([])
   const [deleting, setDeleting] = useState(false)
@@ -603,6 +607,7 @@ function PupilsPage({ fullFinancialAccess, pupils, search, setSearch, classFilte
         : "Register pupils, view their profiles and record amounts received by the school."}
       action={<div className="heading-actions">
         {selected.length > 0 && <button className="button button-danger" onClick={() => setPendingDelete(selected)}>Delete selected ({selected.length})</button>}
+        <button className="button button-secondary" onClick={onPrint} disabled={!canPrint}><Printer size={18} /> Print</button>
         <button className="button button-secondary" onClick={openBulkRegistration}><Users size={18} /> Bulk register</button>
         <button className="button button-primary" onClick={openRegistration}><UserPlus size={18} /> Register pupil</button>
       </div>}
@@ -706,6 +711,25 @@ function FeesPage({ pupils, search, setSearch, setSelectedPupil, openPayment, on
     <div className="filter-bar"><div className="table-search"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a pupil..." /></div><button className="button button-secondary"><Download size={17} /> Export</button></div>
     <section className="panel table-panel"><PupilTable pupils={pupils} onSelect={setSelectedPupil} /></section>
   </>
+}
+
+function PupilPrintReport({ pupils }) {
+  return <section className="print-report pupil-print-report">
+    <h1>Regal Tulip School</h1>
+    <h2>Pupil register</h2>
+    <table>
+      <thead>
+        <tr><th scope="col">Name</th><th scope="col">Admission number</th><th scope="col">Guardian phone number</th></tr>
+      </thead>
+      <tbody>
+        {pupils.map((pupil) => <tr key={pupil.id}>
+          <td>{pupil.firstName} {pupil.lastName}</td>
+          <td>{pupil.admissionNo}</td>
+          <td>{pupil.guardianPhone}</td>
+        </tr>)}
+      </tbody>
+    </table>
+  </section>
 }
 
 function PaymentPrintReport({ pupils }) {

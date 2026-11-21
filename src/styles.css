@@ -366,6 +366,7 @@ input, select, textarea { font-size: 11px; }
 
 @media print {
   @page { size: A4 landscape; margin: 12mm; }
+  @page pupil-register { size: A4 portrait; margin: 12mm; }
   body { background: white; color: #172f25; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .app-shell > :not(.print-report) { display: none !important; }
   .print-report { display: block; width: 100%; font-family: 'DM Sans', sans-serif; }
@@ -377,6 +378,11 @@ input, select, textarea { font-size: 11px; }
   .print-report th { background: #173d2f !important; color: white !important; font-size: 8px; padding: 8px; border: 1px solid #173d2f; }
   .print-report td { color: #243e33; font-size: 8px; padding: 8px; border: 1px solid #cfd7d2; vertical-align: top; }
   .print-report tbody tr { break-inside: avoid; }
+  .pupil-print-report { page: pupil-register; }
+  .pupil-print-report thead { display: table-header-group; }
+  .pupil-print-report h1 { margin: 0 0 4pt; font-size: 16pt; }
+  .pupil-print-report h2 { margin: 0 0 12pt; font-size: 12pt; }
+  .pupil-print-report th, .pupil-print-report td { font-size: 10pt; padding: 5pt 6pt; }
   .print-part-payment strong, .print-part-payment span { display: block; }.print-part-payment strong { color: #315f9e; margin-bottom: 3px; }.print-part-payment span { font-size: 7px; line-height: 1.45; }
   .print-paid { color: #237047; }.print-unpaid { color: #a74141; }
   .print-footer { display: flex; justify-content: space-between; border-top: 1px solid #aebbb4; margin-top: 15px; padding-top: 10px; color: #66766e; font-size: 8px; }

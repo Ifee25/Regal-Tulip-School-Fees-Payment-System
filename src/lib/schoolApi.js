@@ -38,13 +38,21 @@ export async function getActiveTerm() {
 export async function loadSchoolData(adminRole = 'main_admin') {
   const client = requireClient()
   const term = await getActiveTerm()
-  const { data: pupilRows, error: pupilError } = await client
-    .from('pupils')
-    .select('*, class:classes(name), bus_enrollments(*, route:bus_routes(name))')
-    .eq('active', true)
-    .eq('bus_enrollments.term_id', term.id)
-    .order('last_name')
-  if (pupilError) throw pupilError
+  const pupilRows = []
+  const pageSize = 500
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await client
+      .from('pupils')
+      .select('*, class:classes(name), bus_enrollments(*, route:bus_routes(name))')
+      .eq('active', true)
+      .eq('bus_enrollments.term_id', term.id)
+      .order('last_name')
+      .order('id')
+      .range(offset, offset + pageSize - 1)
+    if (error) throw error
+    pupilRows.push(...data)
+    if (data.length < pageSize) break
+  }
 
   const balances = new Map()
   let paymentRows = []
@@ -87,7 +95,7 @@ export async function loadSchoolData(adminRole = 'main_admin') {
     }
   }
 
-  const pupils = await Promise.all((pupilRows || []).map(async (item) => {
+  const pupils = await Promise.all(pupilRows.map(async (item) => {
     let photoUrl = ''
     if (item.photo_path) {
       const { data } = await client.storage.from('pupil-photos').createSignedUrl(item.photo_path, 3600)
